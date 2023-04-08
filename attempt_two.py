@@ -1,3 +1,5 @@
+import time
+
 import can
 from tkinter import filedialog
 
@@ -24,7 +26,7 @@ def fun_Bytes_To_Hex_InStr(bytes):
 def fun_can_send_OneFrame(bus, can_id, can_data, is_extended_id=False):
     # Msg_send = can.Message(extended_id=is_extended_id, arbitration_id=can_id, data=can_data, )
     Msg_send = can.Message(is_extended_id=is_extended_id, arbitration_id=can_id, data=can_data, )
-    print(Msg_send)
+    # print(Msg_send)
     try:
         bus.send(Msg_send)
     except can.CanError:
@@ -36,16 +38,16 @@ def fun_can_send_OneFrame(bus, can_id, can_data, is_extended_id=False):
 # :CAN  Msg object
 # :CANWhen the message is received, the function is called first.
 def fun_can_rev_OneFrame(bus):
+    Msg_recv = None
     try:
         while True:
             Msg_recv = bus.recv(1)
             if Msg_recv is not None:
-                return Msg_recv
-            else:
-                print('Нет ответа от шины')
+                # print(Msg_recv)
+                break
     except can.CanError:
-        print(can.CanError)
-    return False
+        pass
+    return Msg_recv
 
 
 # function name: fun_Get_PCI
@@ -156,7 +158,7 @@ def fun_can_recv_MultiFrame(bus, data_length):
 def data_from_hex(hex_list: list) -> list[int]:
     final_list = []
     for strng in hex_list:
-        if ':0200000400' in strng:  # название раздела
+        if ':02000004000AF0' in strng:  # название раздела
             continue
         elif ':00000001FF' in strng:  # конец файла
             break
@@ -174,14 +176,6 @@ def list_breaker(full_list: list, byte_in_chunk: int = 66) -> list[list[int]]:
     return final_list
 
 
-Error = 0xFE
-
-Next = 0x42
-EndOfBlock = 0x1E
-EndOfHex = 0x08
-answer_list = [Next, EndOfBlock, EndOfHex]
-
-
 def fun_can_send_0501(can_bus: can.BusABC, can_id: int, data: list[int]):
     for i in range(0, len(data), 6):
         FrameData = []
@@ -190,160 +184,87 @@ def fun_can_send_0501(can_bus: can.BusABC, can_id: int, data: list[int]):
         fun_can_send_OneFrame(can_bus, can_id, FrameData)
     fun_can_send_OneFrame(can_bus, can_id, [0x02, 0x01])
     FlowControlMsg = fun_can_rev_OneFrame(can_bus)
-    ans = FlowControlMsg.data[3]
-    if ans in answer_list:
-        return ans
-    # if list(FlowControlMsg.data) == [0x02, 0x01, 0x00, 0x42, 0x00, 0x00]:
-    #     return Next
-    # elif list(FlowControlMsg.data) == [0x02, 0x01, 0x00, 0x1E, 0x00, 0x00]:
-    #     return EndOfBlock
-    # elif list(FlowControlMsg.data) == [0x02, 0x01, 0x00, 0x08, 0x00, 0x00]:
-    #     return EndOfHex
-    # else:
-    for bt in FlowControlMsg.data:
-        print(hex(bt), end='')
-    print()
-    return Error
 
 
-def write_to_file(chunk, file_to_write):
+def write_str_to_file(frame: list[int], file_for_write):
     stri = ''
-    for i in chunk:
+    for i in frame:
         stri += hex(i)[2:].upper().zfill(2)
     stri += '\n'
-    # print((len(ch), len(stri)))
-    file_to_write.write(stri)
+    file_for_write.write(stri)
 
 
-def next_memory_area(byte_sent, old_pointer):
-    PointerFrameData = [0x0D, 0x01, 0x00]
-    fun_can_send_OneFrame(bus, CAN_ID_TX, PointerFrameData +
-                          [0x00, (old_pointer & 0xFF0000) >> 16, (old_pointer & 0xFF00) >> 8, old_pointer & 0xFF])
-    FlowControlMsg = fun_can_rev_OneFrame(bus)
-    if FlowControlMsg.data != PointerFrameData:
-        return False
-    new_pointer = old_pointer + byte_sent + 1
-    return new_pointer
+def just_send_data_list(can_bus: can.BusABC, can_id: int, d_list: list[list[int]], file_for_write=None):
+    for frame in d_list:
+        if file_for_write is not None:
+            write_str_to_file(frame, file_for_write)
+        fun_can_send_OneFrame(can_bus, can_id, frame)
 
 
-def first_chunk_send(bytes):
-    ChunkFrameData = [0x0B, 0x01, 0x08, 0x02, 0x00, 0x00]
-    fun_can_send_OneFrame(bus, CAN_ID_TX, ChunkFrameData +
-                          [(bytes & 0xFF00) >> 8, bytes & 0xFF])
-    FlowControlMsg = fun_can_rev_OneFrame(bus)
-    if list(FlowControlMsg.data) != ChunkFrameData[:2] + [0x01]:
-        return False
-    return True
+def repeat_while(can_bus: can.BusABC, can_id: int, rep_data: list[int], itr=1, file_for_write=None):
+    for _ in range(itr):
+        if file_for_write is not None:
+            write_str_to_file(rep_data, file_for_write)
+        fun_can_send_OneFrame(can_bus, can_id, rep_data)
 
 
-def second_chunk_send(bytes):
-    ChunkFrameData = [0x0B, 0x01, 0x08, 0x03, 0x00, 0x00]
-    fun_can_send_OneFrame(bus, CAN_ID_TX, ChunkFrameData +
-                          [(bytes & 0xFF00) >> 8, bytes & 0xFF])
-    FlowControlMsg = fun_can_rev_OneFrame(bus)
-    if list(FlowControlMsg.data) != ChunkFrameData[:2] + [0x01]:
-        return False
-    return True
+def send_and_answer(can_bus: can.BusABC, can_id: int, d_list: list[list[int]], file_for_write=None):
+    just_send_data_list(can_bus, can_id, d_list)
+    AnswerMsg = fun_can_rev_OneFrame(can_bus)
+    if file_for_write is not None:
+        write_str_to_file(AnswerMsg.data, file_for_write)
+    return AnswerMsg.data
 
 
-def end_of_memory_area(last_chunk, old_pointer):
-    first_chunk = 0xFFFF
-    new_pointer = next_memory_area(first_chunk, old_pointer)
-    if not new_pointer:
-        return False
-    if not first_chunk_send(first_chunk):
-        return False
-    second_chunk = last_chunk - first_chunk
-    new_pointer = next_memory_area(second_chunk, new_pointer)
-    if not new_pointer:
-        return False
-    if not second_chunk_send(second_chunk):
-        return False
-    return new_pointer
-
-
-def send_and_answer(data: list[int]) -> bool:
-    fun_can_send_OneFrame(bus, CAN_ID_TX, data)
-    FlowControlMsg = fun_can_rev_OneFrame(bus)
-    if list(FlowControlMsg.data) != data[:2]:
-        return False
-    return True
-
-
-def go_command():
-    FrameData = [0x0D, 0x01, 0x08, 0x02, 0x00, 0x00]
-    return send_and_answer(FrameData)
-
-
-def alternative_go_command():
-    FrameData = [0x0D, 0x01, 0x00, 0x0A, 0x00, 0x80]
-    return send_and_answer(FrameData)
-
-
-def command_1801():
-    FrameData = [0x18, 0x01, 0xA9, 0x31, 0xBA, 0x5D]
-    return send_and_answer(FrameData)
-
-
-def end_of_boot_hex(last_chunk, old_pointer):
-    first_chunk = 0xFFFF
-    new_pointer = next_memory_area(first_chunk, old_pointer)
-    if not new_pointer:
-        return False
-
-    if last_chunk <= first_chunk:
-        if not second_chunk_send(last_chunk):
-            return False
-        return new_pointer
-
-    if not first_chunk_send(first_chunk):
-        return False
-    second_chunk = last_chunk - first_chunk
-    new_pointer = next_memory_area(second_chunk, new_pointer)
-    if not new_pointer:
-        return False
-    if not second_chunk_send(second_chunk):
-        return False
-    return new_pointer
+def from_log_to_can(log, bus, file):
+    old_line = None
+    for line in log:
+        match line.arbitration_id:
+            case 0x1:
+                timestamp = (line.timestamp - old_line.timestamp) if old_line else 0
+                time.sleep(timestamp)
+                fun_can_send_OneFrame(bus, line.arbitration_id, line.data)
+                old_line = line
+                print(timestamp)
+            case 0x2:
+                AnsMsg = fun_can_rev_OneFrame(bus)
+                print(AnsMsg)
+                if line.data[0] == 0x4 and line.data[0] == 0x1:
+                    write_str_to_file(line.data, file)
+            case _:
+                fun_can_send_OneFrame(bus, line.arbitration_id, line.data)
 
 
 if __name__ == '__main__':
     file_name = filedialog.askopenfilename()
+    with open(file_name, 'r') as file:
+        data_list = data_from_hex(file.readlines())
+    chunk_list = list_breaker(data_list)
+
+    bootloader_log = can.ASCReader('prepare_for_boot.asc')
+    finish_log = can.ASCReader('finish_boot.asc')
+    bus = can.Bus(channel=0, receive_own_messages=True, interface='kvaser', bitrate=125000)
+    CAN_ID_TX = 0x01
+
+    with open('kvu_answer.txt', 'w+') as file:
+        from_log_to_can(bootloader_log, bus, file)
+        for ch in chunk_list:
+            fun_can_send_0501(bus, CAN_ID_TX, ch)
+        from_log_to_can(finish_log, bus, file)
 
     # with open('vmu_n1.hex', 'r') as file:
     # with open('vmu_n3_mirrors_heating.hex', 'r') as file:
-    with open(file_name, 'r') as file:
-        data_list = data_from_hex(file.readlines())
-    size_of_hex = len(data_list)
-    chunk_list = list_breaker(data_list)
-    bus = can.Bus(channel=0, receive_own_messages=True, interface='kvaser', bitrate=125)
-    CAN_ID_TX = 0x01
-    pointer = 0x090000
-    counter = 0
+    #
 
-    # -------------------------- boooooot hex --------------------------
     # with open('data_like_log.txt', 'w+') as file:
-    for ch in chunk_list:
-        # write_to_file(ch, file)
-        matc = fun_can_send_0501(bus, CAN_ID_TX, ch)
-        counter += len(ch)
-        if matc == Error:
-            print('Wrong answer from TTC')
-            break
-            # continue
-        elif matc == Next:
-            continue
-        elif matc == EndOfBlock:
-            pointer = end_of_memory_area(counter, pointer)
-            counter = 0
-            if not pointer:
-                print('Wrong answer from TTC in change pointer')
-                break
-            go_command()
-        elif matc == EndOfHex:
-            pointer = end_of_boot_hex(counter, pointer)
-            if not pointer:
-                print('Wrong answer from TTC at the end of hex')
-                break
-            command_1801()
-            alternative_go_command()
+    #     repeat_while(bus, CAN_ID_TX, [0x01, 0xff], 400, file)
+    # for ch in chunk_list:
+    #     fun_can_send_0501(bus, CAN_ID_TX, ch)
+    #     stri = ''
+    #
+    #     for i in ch:
+    #         stri += hex(i)[2:].upper().zfill(2)
+    #     stri += '\n'
+    #     print((len(ch), len(stri)))
+    #     file.write(stri)
+    # print(len(chunk_list))
