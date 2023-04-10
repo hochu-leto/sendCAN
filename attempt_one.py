@@ -1,3 +1,5 @@
+import time
+
 import can
 from tkinter import filedialog
 
@@ -153,8 +155,8 @@ def fun_can_recv_MultiFrame(bus, data_length):
     return RecievedData
 
 
-def data_from_hex(hex_list: list) -> list[int]:
-    final_list = []
+def data_from_hex(hex_list: list) -> (list[int], str):
+    final_list, data_str = [], ''
     for strng in hex_list:
         if ':0200000400' in strng:  # название раздела
             continue
@@ -162,9 +164,10 @@ def data_from_hex(hex_list: list) -> list[int]:
             break
         else:
             data_string = strng[9:-3]
+            data_str += data_string
             for byt in range(0, len(data_string), 2):
                 final_list.append(int(data_string[byt:byt + 2], 16))
-    return final_list
+    return final_list, data_str
 
 
 def list_breaker(full_list: list, byte_in_chunk: int = 66) -> list[list[int]]:
@@ -271,18 +274,59 @@ def send_and_answer(data: list[int]) -> bool:
 
 
 def go_command():
-    FrameData = [0x0D, 0x01, 0x08, 0x02, 0x00, 0x00]
+    go = [0x08, 0x02, 0x00, 0x00]
+    return command_0D01(go)
+
+
+def byte_list_from_int(check_sum: int) -> list[int]:
+    if check_sum <= 0xFF:
+        return [check_sum & 0xFF]
+    elif check_sum <= 0xFFFF:
+        return [(check_sum & 0xFF00) >> 8, check_sum & 0xFF]
+    elif check_sum <= 0xFFFFFF:
+        return [(check_sum & 0xFF0000) >> 16, (check_sum & 0xFF00) >> 8, check_sum & 0xFF]
+    else:
+        return [(check_sum & 0xFF000000) >> 24, (check_sum & 0xFF0000) >> 16, (check_sum & 0xFF00) >> 8,
+                check_sum & 0xFF]
+
+
+def int_from_list(byte_list: list[int]) -> int:
+    x = 0
+    for i, bt in enumerate(byte_list[::-1]):
+        x += bt << (8 * i)
+    return x
+
+
+def command_1101(data_list_1101: list[int]) -> bool:  # set CRC-int(Encrypted)
+    FrameData = [0x11, 0x01] + data_list_1101
     return send_and_answer(FrameData)
 
 
-def alternative_go_command():
-    FrameData = [0x0D, 0x01, 0x00, 0x0A, 0x00, 0x80]
+def command_1801(data_list_1801: list[int]) -> bool:  # set CRC-int(Encrypted)
+    # check_sum_list = [0xA9, 0x31, 0xBA, 0x5D]
+    FrameData = [0x18, 0x01] + data_list_1801
     return send_and_answer(FrameData)
 
 
-def command_1801():
-    FrameData = [0x18, 0x01, 0xA9, 0x31, 0xBA, 0x5D]
+def command_1901(data_list_1901: list[int]) -> bool:
+    FrameData = [0x19, 0x01] + data_list_1901
     return send_and_answer(FrameData)
+
+
+def command_2001(SomeData: list[int]) -> bool:
+    FrameData = [0x20, 0x01] + SomeData
+    return send_and_answer(FrameData)
+
+
+def command_0D01(data_list_0D01: list[int]) -> bool:  # set CRC-int(Encrypted)
+    FrameData = [0x0D, 0x01] + data_list_0D01
+    return send_and_answer(FrameData)
+
+
+def switch_something_1101(sw: int):
+    switch_address = [0x40, 0xAF, 0x35, 0x9F]
+    command_1101(switch_address + [sw])
+    FlowControlMsg = fun_can_rev_OneFrame(bus)
 
 
 def end_of_boot_hex(last_chunk, old_pointer):
@@ -307,30 +351,123 @@ def end_of_boot_hex(last_chunk, old_pointer):
     return new_pointer
 
 
+def request_CRC_Table_Checksum() -> int:
+    CRC_Table_Checksum_address = [0x00, 0x00, 0x00, 0x10]
+    return request_ttc_1001(CRC_Table_Checksum_address)
+
+
+def request_ttc_1001(address: list[int]) -> int:
+    RequestFrame = [0x10, 0x01]
+    request_frame = RequestFrame + address
+    fun_can_send_OneFrame(bus, CAN_ID_TX, request_frame)
+    FlowControlMsg = fun_can_rev_OneFrame(bus)
+    ttc_data_list = list(FlowControlMsg.data)
+    if ttc_data_list[:2] != RequestFrame:
+        return 0
+    return int_from_list(ttc_data_list[-4:])
+
+
+def request_ttc_1F01(address: list[int]) -> int:
+    RequestFrame = [0x1F, 0x01]
+    request_frame = RequestFrame + address
+    fun_can_send_OneFrame(bus, CAN_ID_TX, request_frame)
+    FlowControlMsg = fun_can_rev_OneFrame(bus)
+    ttc_data_list = list(FlowControlMsg.data)
+    if ttc_data_list[:2] != RequestFrame:
+        return 0
+    return int_from_list(ttc_data_list[-4:])
+
+
+def request_ttc_0401(address: list[int], number_of_bytes: int) -> (list[int]):  # , str):
+    RequestFrame = [0x04, 0x01]
+    request_frame = RequestFrame + address + [number_of_bytes]
+    final_list, data_str = [], ''
+    fun_can_send_OneFrame(bus, CAN_ID_TX, request_frame)
+    frame_count = number_of_bytes // 6 + (1 if number_of_bytes % 6 else 0)
+    for i in range(frame_count):
+        Msg_recv = fun_can_rev_OneFrame(bus)
+        useful_data = Msg_recv.data[2:]
+        final_list.append(useful_data)
+        for bt in useful_data:
+            data_str += hex(bt)[2:].upper().zfill(2)
+    return final_list  # , data_str
+
+
+def check_some_info():
+    some_data_tts = request_ttc_0401([0x00, 0x0A, 0x00, 0x80], 0x10)
+    unknown_data1 = int_from_list(some_data_tts[8:12])  # D8 58 68 34
+    unknown_data2 = int_from_list(some_data_tts[12:16])  # 9D 45 1E E5
+
+    req_unknown_data2 = request_ttc_1F01([0x00, 0x00])
+    if req_unknown_data2 != unknown_data2:
+        print(f'unknown_data2 isn"t matched\n'
+              f' from hex {hex(unknown_data2)} != from ttc {hex(req_unknown_data2)}')
+        quit()
+
+    req_unknown_data1 = request_ttc_1F01([0x00, 0x01])
+    if req_unknown_data1 != unknown_data1:
+        print(f'unknown_data1 isn"t matched\n'
+              f' from hex {hex(unknown_data1)} != from ttc {hex(req_unknown_data1)}')
+        quit()
+
+
+def hello_and_switch_on(tm: float = 0.001):
+    time.sleep(tm)
+    hello_frame = [0x11, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00]
+    fun_can_send_OneFrame(bus, CAN_ID_TX, hello_frame)
+    switch_something_1101(1)
+
+
+def check_CRC_Table_Checksum():
+    command_1801(byte_list_from_int(CRC_int_Encrypted))     # check_sum_list = [0xA9, 0x31, 0xBA, 0x5D]
+    command_0D01(byte_list_from_int(CRC_Table_Address))     # check_sum_list = [0x00, 0x0A, 0x00, 0x80]
+    table_checksum = request_CRC_Table_Checksum()
+    if table_checksum != CRC_Table_Checksum:                # 8B 16 73 6D
+        print(f'CRC_Table_Checksum isn"t matched\n'
+              f' from hex {hex(CRC_Table_Checksum)} != from ttc {hex(table_checksum)}')
+        quit()
+    return table_checksum
+
+
+def set_some_number_and_on():
+    command_1901(byte_list_from_int(some_number))  # B9 20 2E E7
+    switch_something_1101(1)
+
+
+def set_another_number_and_off():
+    command_1901(byte_list_from_int(another_number))  # B9 20 2E E7
+    switch_something_1101(0)
+
+
 if __name__ == '__main__':
     file_name = filedialog.askopenfilename()
 
-    # with open('vmu_n1.hex', 'r') as file:
-    # with open('vmu_n3_mirrors_heating.hex', 'r') as file:
     with open(file_name, 'r') as file:
-        data_list = data_from_hex(file.readlines())
+        data_list, hex_str = data_from_hex(file.readlines())
     size_of_hex = len(data_list)
+    CRC_int_Encrypted = int(hex_str[72:80], 16)
+    Node_Type = int(hex_str[24:32], 16)
+    CRC_Table_Address = int(hex_str[32:40], 16)
+    CRC_Table_Checksum = int(hex_str[56:64], 16)
     chunk_list = list_breaker(data_list)
-    bus = can.Bus(channel=0, receive_own_messages=True, interface='kvaser', bitrate=125)
+    bus = can.Bus(channel=0, receive_own_messages=True, interface='kvaser', bitrate=125000)
     CAN_ID_TX = 0x01
     pointer = 0x090000
     counter = 0
+    some_number = 0xB9202EE7
+    another_number = 0xD3DEAE44
 
+    hello_and_switch_on()
+
+    set_some_number_and_on()
+    ...
     # -------------------------- boooooot hex --------------------------
-    # with open('data_like_log.txt', 'w+') as file:
     for ch in chunk_list:
-        # write_to_file(ch, file)
         matc = fun_can_send_0501(bus, CAN_ID_TX, ch)
         counter += len(ch)
         if matc == Error:
             print('Wrong answer from TTC')
-            break
-            # continue
+            quit()
         elif matc == Next:
             continue
         elif matc == EndOfBlock:
@@ -341,9 +478,69 @@ if __name__ == '__main__':
                 break
             go_command()
         elif matc == EndOfHex:
-            pointer = end_of_boot_hex(counter, pointer)
-            if not pointer:
-                print('Wrong answer from TTC at the end of hex')
-                break
-            command_1801()
-            alternative_go_command()
+            break
+
+    pointer = end_of_boot_hex(counter, pointer)
+    if not pointer:
+        print('Wrong answer from TTC at the end of hex')
+        quit()
+    # --------------------------------------- end of boot hex -------------------
+
+    check_CRC_Table_Checksum()
+
+    check_some_info()
+
+    # я хрен его знаю что это - хост задаёт какие-то адреса в кву
+    if not command_2001([0x00, 0x0A, 0x00, 0x00, 0x00, 0x00]) or \
+            not command_2001([0x00, 0x0C, 0x00, 0x00, 0x00, 0x00]) or \
+            not command_2001([0x00, 0x0E, 0x00, 0x00, 0x00, 0x00]) or \
+            not command_2001([0x00, 0x10, 0x00, 0x00, 0x00, 0x00]):
+        print(f'some memory area can"t set')
+        quit()
+
+    ttc_information = request_ttc_0401([0x00, 0x00, 0xFF, 0x80], 0x80)
+    ttc_information += request_ttc_0401([0x00, 0xA0, 0x00, 0x00], 0x80)
+
+    command_1801([0xB6, 0xE0, 0xC2, 0xEC])  # вообще непонятно откуда эта цифра
+    command_0D01([0x00, 0x0A, 0x00, 0x00])  # ????????????
+    unknown_CRC1 = request_ttc_1001([0x00, 0x00, 0x00, 0x7C])  # ????????????
+
+    check_CRC_Table_Checksum()
+
+    check_some_info()
+
+    ttc_information += request_ttc_0401([0x00, 0x09, 0xFF, 0x80], 0x80)
+
+    command_1801([0x0A, 0xEC, 0xAB, 0x26])  # вообще непонятно откуда эта цифра
+    command_0D01([0x00, 0x02, 0x00, 0x00])  # ????????????
+    unknown_CRC2 = request_ttc_1001([0x00, 0x07, 0xFF, 0x80])  # ????????????
+
+    ttc_information += request_ttc_0401([0x00, 0x01, 0x80, 0x00], 0x80)
+
+    hello_and_switch_on()
+
+    set_another_number_and_off()
+
+    hello_and_switch_on(0.05)
+
+    set_some_number_and_on()
+
+    check_CRC_Table_Checksum()
+
+    check_some_info()
+
+    hello_and_switch_on()
+
+    set_another_number_and_off()
+
+    hello_and_switch_on(0.07)
+
+    set_some_number_and_on()
+
+    check_CRC_Table_Checksum()
+
+    check_some_info()
+
+    hello_and_switch_on()
+
+    set_another_number_and_off()
