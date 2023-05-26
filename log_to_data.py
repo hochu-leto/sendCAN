@@ -1,3 +1,4 @@
+import pickle
 from tkinter import filedialog
 
 import can
@@ -30,18 +31,33 @@ def data_from_asc(file_asc) -> list[int]:
     return final_list
 
 
+def data_from_asc_my(file_asc) -> list[int]:
+    data_log = can.ASCReader(file_asc)
+    # final_list = [int(bt, 16) for line in data_log if line.data[:2] == [0x05, 0x01] for bt in line.data]
+    final_list = []
+    for line in data_log:
+        if list(line.data[:2]) == [0x05, 0x01]:
+            final_list += line.data[2:]
+            # for bt in line.data[2:]:
+            #     final_list.append(int(bt))
+    return final_list
+
+
 if __name__ == '__main__':
     file_name = filedialog.askopenfilename()
     # with open(file_name, 'r') as file:
     #     data_list = data_from_log(file.readlines())
-    data_list = data_from_asc(file_name)
-    chunk_list = list_breaker(data_list)
-    with open('data_from_log.txt', 'w+') as file:
-        for ch in chunk_list:
-            stri = ''
-            for i in ch:
-                stri += hex(i)[2:].upper().zfill(2)
-            stri += '\n'
-            print((len(ch), len(stri)))
-            file.write(stri)
-    print(len(chunk_list))
+    # data_list = data_from_asc(file_name)
+    # chunk_list = list_breaker(data_list)
+    # with open('data_from_log.txt', 'w+') as file:
+    #     for ch in chunk_list:
+    #         stri = ''
+    #         for i in ch:
+    #             stri += hex(i)[2:].upper().zfill(2)
+    #         stri += '\n'
+    #         print((len(ch), len(stri)))
+    #         file.write(stri)
+    # print(len(chunk_list))
+
+    with open('data_for_first_boot_ttc.pickle', 'wb') as fp:
+        pickle.dump(data_from_asc_my(file_name), fp)
