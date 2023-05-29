@@ -29,7 +29,7 @@ def fun_Bytes_To_Hex_InStr(bytes):
 def fun_can_send_OneFrame(bus, can_id, can_data, is_extended_id=False):
     # Msg_send = can.Message(extended_id=is_extended_id, arbitration_id=can_id, data=can_data, )
     Msg_send = can.Message(is_extended_id=is_extended_id, arbitration_id=can_id, data=can_data, )
-    print(Msg_send)
+    # print(Msg_send)
     try:
         bus.send(Msg_send)
     except can.CanError:
@@ -47,7 +47,7 @@ def fun_can_rev_OneFrame(bus, wt=1.0):
         if Msg_recv is not None:
             return Msg_recv
         else:
-            print('Нет ответа от шины')
+            print('No answer from vmu')
     except can.CanError:
         print(can.CanError)
     return False
@@ -97,7 +97,7 @@ def fun_can_send_MultiFrame(bus, can_id, can_data, data_length):
                 SN = i % 16
                 ConsecutiveFrameData[0:0 + 1] = (SN + 0x20).to_bytes(1, byteorder='big')
                 ConsecutiveFrameData[1:1 + 7] = can_data[6 + (i - 1) * 7:6 + 7 * i]
-                print(fun_Bytes_To_Hex_InStr(ConsecutiveFrameData))
+                # print(fun_Bytes_To_Hex_InStr(ConsecutiveFrameData))
                 fun_can_send_OneFrame(bus, can_id, ConsecutiveFrameData)
         else:
             ConsecutiveFrameCounter = (data_length - 6) // 7 + 1
@@ -176,7 +176,20 @@ def data_from_hex(hex_list: list) -> (list[int], str):
 def list_breaker(full_list: list, byte_in_chunk: int = 66) -> list[list[int]]:
     final_list = []
     for i in range(0, len(full_list), byte_in_chunk):
+
         final_list.append(full_list[i:i + byte_in_chunk])
+    return final_list
+
+
+def new_list_breaker(full_list: list, byte_in_chunk: int = 66) -> list[list[int]]:
+    final_list = []
+    for chnk in range(0, len(full_list), PartOfMemoryArea + 1):
+        part_list = full_list[chnk:chnk + PartOfMemoryArea + 1]
+        # print(len(part_list))
+        for i in range(0, len(part_list), byte_in_chunk):
+            ch = part_list[i:i + byte_in_chunk]
+            final_list.append(ch)
+        # print(len(ch), ch[len(ch) - 1])
     return final_list
 
 
@@ -196,14 +209,8 @@ def fun_can_send_05(can_bus: can.BusABC, can_id: int, data: list[int]):
         FrameData[2:2 + 6] = data[i:i + 6]
         fun_can_send_OneFrame(can_bus, can_id, FrameData)
     fun_can_send_OneFrame(can_bus, can_id, [0x02, second_byte])
-    FlowControlMsg = fun_can_rev_OneFrame(can_bus)
-    ans = FlowControlMsg.data[3]
-    if ans in answer_list:
-        return ans
-    for bt in FlowControlMsg.data:
-        print(hex(bt), end='')
-    print()
-    return Error
+    FlowControlMsg = fun_can_rev_OneFrame(can_bus, wt=5)
+    return FlowControlMsg   # Error
 
 
 def write_to_file(chunk, file_to_write):
@@ -211,14 +218,11 @@ def write_to_file(chunk, file_to_write):
     for i in chunk:
         stri += hex(i)[2:].upper().zfill(2)
     stri += '\n'
-    # print((len(ch), len(stri)))
     file_to_write.write(stri)
 
 
-def next_memory_area(byte_sent, old_pointer):
-    command_0D([0x00, (old_pointer & 0xFF0000) >> 16, (old_pointer & 0xFF00) >> 8, old_pointer & 0xFF])
-    new_pointer = old_pointer + byte_sent + 1   # 11 80 + FF FF + 1
-    return new_pointer
+def next_memory_area(pointer):
+    command_0D([0x00, (pointer & 0xFF0000) >> 16, (pointer & 0xFF00) >> 8, pointer & 0xFF])
 
 
 def first_chunk_send(bytes):
@@ -229,26 +233,35 @@ def second_chunk_send(bytes):
     return command_0B(run + [(bytes & 0xFF00) >> 8, bytes & 0xFF])
 
 
-def end_of_memory_area(last_chunk, old_pointer):
-    first_chunk = 0xFFFF
-    new_pointer = next_memory_area(first_chunk, old_pointer)
-    if not new_pointer:
-        return False
-    if not first_chunk_send(first_chunk):
-        return False
-    second_chunk = last_chunk - first_chunk
-    new_pointer = next_memory_area(second_chunk, new_pointer)
-    if not new_pointer:
-        return False
-    if not second_chunk_send(second_chunk):
-        return False
-    return new_pointer
+def end_of_memory_area(pointer):
+    print(f'{hex(pointer)=}')
+    command_0D([0x00, (pointer & 0xFF0000) >> 16, (pointer & 0xFF00) >> 8, pointer & 0xFF])
+    command_0B(go + [0xFF, 0xFF])
+    pointer += 0x010000
+    command_0D([0x00, (pointer & 0xFF0000) >> 16, (pointer & 0xFF00) >> 8, pointer & 0xFF])
+    command_0B(run + [0x7F, 0xFF])
+    return pointer + 0x8000
+
+
+def end_of_boot_hex(len_of_data, pointer):
+    command_0D([0x00, (pointer & 0xFF0000) >> 16, (pointer & 0xFF00) >> 8, pointer & 0xFF])
+    print(f'{hex(len_of_data)=}')
+    if len_of_data < 0x70000:
+        ln = len_of_data - 0x60000 - 11
+        command_0B(go + [(ln & 0xFF00) >> 8, ln & 0xFF])
+        return pointer
+    command_0B(go + [0xFF, 0xFF])
+    pointer += 0x010000
+    command_0D([0x00, (pointer & 0xFF0000) >> 16, (pointer & 0xFF00) >> 8, pointer & 0xFF])
+    ln = len_of_data - 0x70000 - 1
+    command_0B(run + [(ln & 0xFF00) >> 8, ln & 0xFF])
+    return pointer
 
 
 def send_and_answer(data: list[int]) -> bool:
     fun_can_send_OneFrame(bus, CAN_ID_TX, data)
     FlowControlMsg = fun_can_rev_OneFrame(bus)
-    if FlowControlMsg and list(FlowControlMsg.data) != data[:2]:
+    if FlowControlMsg and list(FlowControlMsg.data)[:2] != data[:2]:
         return False
     return True
 
@@ -314,6 +327,11 @@ def command_0B(data_list_0B: list[int]) -> bool:
     return send_and_answer(FrameData)
 
 
+def command_0C(data_list_0C: list[int]) -> bool:
+    FrameData = [0x0C, second_byte] + data_list_0C
+    return send_and_answer(FrameData)
+
+
 def command_0D(data_list_0D01: list[int]) -> bool:  # set CRC-int(Encrypted)
     FrameData = [0x0D, second_byte] + data_list_0D01
     return send_and_answer(FrameData)
@@ -327,28 +345,6 @@ def command_0E(data_list_0E01: list[int]) -> bool:
 def switch_something_11(sw: int):
     command_11(switch_address + [sw])
     FlowControlMsg = fun_can_rev_OneFrame(bus)
-
-
-def end_of_boot_hex(last_chunk, old_pointer):
-    first_chunk = 0xFFFF
-    new_pointer = next_memory_area(first_chunk, old_pointer)
-    if not new_pointer:
-        return False
-
-    if last_chunk <= first_chunk:
-        if not second_chunk_send(last_chunk):
-            return False
-        return new_pointer
-
-    if not first_chunk_send(first_chunk):
-        return False
-    second_chunk = last_chunk - first_chunk
-    new_pointer = next_memory_area(second_chunk, new_pointer)
-    if not new_pointer:
-        return False
-    if not second_chunk_send(second_chunk):
-        return False
-    return new_pointer
 
 
 def request_CRC_Table_Checksum() -> list:
@@ -467,27 +463,16 @@ def set_another_number_and_off():
     switch_something_11(0)
 
 
-def booot_hex(chnk_list: list, pntr: int):
-    cnter = 0
-    for ch in chnk_list:
-        matc = fun_can_send_05(bus, CAN_ID_TX, ch)
-        cnter += len(ch)
-        if matc == Error:
-            print('Wrong answer from TTC')
-            return False
-        elif matc == Next:
-            continue
-        elif matc == EndOfBlock:
-            pntr = end_of_memory_area(cnter, pntr)
-            cnter = 0
-            if not pntr:
-                print('Wrong answer from TTC in change pointer')
-                return False
+def booot_hex(chunks_list: list, point: int):
+    counter_send_byte = 0
+    for ch in chunks_list:
+        answer = fun_can_send_05(bus, CAN_ID_TX, ch)
+        counter_send_byte += len(ch)
+        if counter_send_byte >= PartOfMemoryArea:
+            point = end_of_memory_area(point)
+            counter_send_byte = 0
             go_command()
-        else:   # if matc == EndOfHex:
-            return pntr
-        # elif matc == SomeAnswer:
-        #     return pntr
+    return point
 
 
 def info_and_CRC_after_boot():
@@ -507,11 +492,11 @@ def info_and_CRC_after_boot():
 
     command_18(lst2_for_1801)  # вообще непонятно откуда эта цифра  ok
     command_0D(lst3_for_0D01)  # ????????????   ok
-    unknown_CRC2 = request_ttc_10(lst2_for_1001)    # ok 74 01 FB 28
+    unknown_CRC2 = request_ttc_10(lst2_for_1001)  # ok 74 01 FB 28
 
     ttc_information += request_ttc_04(lst4_for_0401, 0x80)
     hello_and_switch_on()
-    set_another_number_and_off()    # other number
+    set_another_number_and_off()  # other number
     # ++++++++++++++++++++ это повторяется после загрузки основной прошивки++++++++++++++
     return ttc_information, unknown_CRC2
 
@@ -528,31 +513,17 @@ if __name__ == '__main__':
         first_data_list = pickle.load(fp)
     first_list = list_breaker(first_data_list)
 
-    file_name = filedialog.askopenfilename()
-    # file_name = 'data_for_first_boot_ttc.txt'
+    # file_name = filedialog.askopenfilename()
+    # ih = IntelHex(file_name)
+    # dt_list = list(ih.todict().values())
+    # print(f'{hex(len(dt_list)).upper()=}')
 
-    # with open(file_name, 'r') as file:
-    #     data_list, hex_str = data_from_hex(file.readlines())
-
-    ih = IntelHex(file_name)
-    dt_list = list(ih.todict().values())
-
-    # size_of_hex = len(data_list)
-    s_of_hex = len(dt_list)
-    # Node_Type = int(hex_str[24:32], 16)
-    Node_Type_list = dt_list[12:16]
-    CRC_Table_Address_list = dt_list[16:20]
-    # CRC_Table_Address = int(hex_str[32:40], 16)
-    CRC_Table_Checksum_list = dt_list[28:32]
-    # CRC_Table_Checksum = int(hex_str[56:64], 16)
-    # CRC_int_Encrypted = int(hex_str[72:80], 16)
-    CRC_int_Encrypted_list = dt_list[36:40]
-    # chunk_list = list_breaker(data_list)
-    chunk_list = list_breaker(dt_list)
     bus = can.Bus(channel=0, receive_own_messages=False, interface='kvaser', bitrate=500000)
     CAN_ID_TX = 0x01
-    pointer = 0x090000
+    pointer = 0x0A0000
     counter = 0
+    PartOfMemoryArea = 0xFFFF + 0x8000
+
     CRC_Table_Checksum_address = [0x00, 0x00, 0x00, 0x10]
 
     hello_frame = [0x11, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00]
@@ -560,7 +531,7 @@ if __name__ == '__main__':
     run = [0x08, 0x03, 0x00, 0x00]
 
     lst1_for_0401 = [0x00, 0x00, 0xFF, 0x80]
-    lst2_for_0401 = [0x00, 0xA0, 0x00, 0x00]
+    lst2_for_0401 = [0x00, 0x0A, 0x00, 0x00]
     lst3_for_0401 = [0x00, 0x09, 0xFF, 0x80]
     lst4_for_0401 = [0x00, 0x01, 0x80, 0x00]
     lst5_for_0401 = [0x00, 0x0A, 0x00, 0x80]
@@ -579,8 +550,8 @@ if __name__ == '__main__':
     lst1_for_1801 = [0xB6, 0xE0, 0xC2, 0xEC]
     lst2_for_1801 = [0x0A, 0xEC, 0xAB, 0x26]
 
-    lst1_for_19 = [0xB9, 0x20, 0x2E, 0xE7]     # [0xCB, 0x26, 0xFE, 0x10]
-    lst2_for_1901 = [0xD3, 0xDE, 0xAE, 0x44]    # C6  08  B5  7E
+    lst1_for_19 = [0xB9, 0x20, 0x2E, 0xE7]  # [0xCB, 0x26, 0xFE, 0x10]
+    lst2_for_1901 = [0xD3, 0xDE, 0xAE, 0x44]  # C6  08  B5  7E
     # switch_address = [0x40, 0xAF, 0x35, 0x9F]
     # ======================= из файла connect_to_ttc ==================================
     switch_vmu_to_boot()  # ok
@@ -588,17 +559,16 @@ if __name__ == '__main__':
 
     hello_and_switch_on(0.25)  # ok
 
-    some_list = command_17(lst1_for_19 + [0x00])    # another_list ?????????????
-    another_list = command_17(lst2_for_1701 + [0x01])    # another_list ??????????
+    some_list = command_17(lst1_for_19 + [0x00])  # another_list ?????????????
+    another_list = command_17(lst2_for_1701 + [0x01])  # another_list ??????????
     if not some_list or not another_list:
         print(f'wrong answer from vmu for 17 01 request')
-        # quit()
 
     time.sleep(0.05)
     fun_can_send_OneFrame(bus, CAN_ID_TX, hello_frame)
     hello_and_switch_on(0.025)  # ok
     command_0D(lst1_for_0D01)  # ok
-    booot_hex(first_list, 0)   # ok
+    booot_hex(first_list, 0)  # ok
 
     command_0E(lst1_for_0E01)  # ok
     alternative_switch_address = list(request_ttc_14(second_byte).data)[2:]  # ok
@@ -610,45 +580,55 @@ if __name__ == '__main__':
 
     hello_and_switch_on()  # ok
     set_some_number_and_on()  # ok
-    info_before, some_CRC = info_and_CRC_after_boot()   # ng 19 list
+    info_before, some_CRC = info_and_CRC_after_boot()  # ng 19 list
 
     # ==================================== select file ======================================
+    file_name = filedialog.askopenfilename()
+    # file_name = 'C:\\Users\\timofey.inozemtsev\\PycharmProjects\\sendCAN\\my_boot_580\\full_boot_1.5.0\\vmu_n1_580_1_5_0.hex'
+    ih = IntelHex(file_name)
+    dt_list = list(ih.todict().values())
+    print(f'{len(dt_list)=}')
+    Node_Type_list = dt_list[12:16]
+    CRC_Table_Address_list = dt_list[16:20]
+    CRC_Table_Checksum_list = dt_list[28:32]
+    CRC_int_Encrypted_list = dt_list[36:40]
+    chunk_list = new_list_breaker(dt_list)
+
     hello_and_switch_on()
     set_some_number_and_on()
     hello_and_switch_on()
     set_another_number_and_off()
 
     # =================================== всё, что в файле boot_hex.asc=======================
-    hello_and_switch_on()   # ok
-    set_some_number_and_on()   # ng 19 list
+    hello_and_switch_on()  # ok
+    set_some_number_and_on()  # ng 19 list
     # я хрен его знаю что это - хост задаёт какие-то адреса в кву  ok
-    if not command_20([0x00, 0x0A, 0x00, 0x00, 0x00, 0x00]) or \
-            not command_20([0x00, 0x0C, 0x00, 0x00, 0x00, 0x00]) or \
-            not command_20([0x00, 0x0E, 0x00, 0x00, 0x00, 0x00]) or \
-            not command_20([0x00, 0x10, 0x00, 0x00, 0x00, 0x00]):
+    sec0A = command_0C([0x00, 0x0A, 0x00, 0x00, 0xFF, 0xFF])
+    sec0C = command_0C([0x00, 0x0C, 0x00, 0x00, 0xFF, 0xFF])
+    sec0E = command_0C([0x00, 0x0E, 0x00, 0x00, 0xFF, 0xFF])
+    sec10 = command_0C([0x00, 0x10, 0x00, 0x00, 0xFF, 0xFF])
+    if not sec0A or not sec0C or not sec0E or not sec10:
         print(f'some memory area can"t set')
-        # quit()
 
     go_command()
 
     # -------------------------- boooooot hex --------------------------
 
     pointer = booot_hex(chunk_list, pointer)
-    pointer = end_of_boot_hex(counter, pointer)
+    pointer = end_of_boot_hex(len(dt_list), pointer)
     if not pointer:
         print('Wrong answer from TTC at the end of hex')
-        # quit()
     # --------------------------------------- end of boot hex -------------------
 
     check_CRC_Table_Checksum()
 
     # я хрен его знаю что это - хост задаёт какие-то адреса в кву
-    if not command_20([0x00, 0x0A, 0x00, 0x00, 0x00, 0x00]) or \
-            not command_20([0x00, 0x0C, 0x00, 0x00, 0x00, 0x00]) or \
-            not command_20([0x00, 0x0E, 0x00, 0x00, 0x00, 0x00]) or \
-            not command_20([0x00, 0x10, 0x00, 0x00, 0x00, 0x00]):
+    sec0A = command_20([0x00, 0x0A, 0x00, 0x00, 0x00, 0x00])
+    sec0C = command_20([0x00, 0x0C, 0x00, 0x00, 0x00, 0x00])
+    sec0E = command_20([0x00, 0x0E, 0x00, 0x00, 0x00, 0x00])
+    sec10 = command_20([0x00, 0x10, 0x00, 0x00, 0x00, 0x00])
+    if not sec0A or not sec0C or not sec0E or not sec10:
         print(f'some memory area can"t set')
-        # quit()
     info_after, new_crc = info_and_CRC_after_boot()
     # ========================================================
     hello_and_switch_on(0.05)
