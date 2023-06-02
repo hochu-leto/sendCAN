@@ -46,8 +46,8 @@ def fun_can_rev_OneFrame(bus, wt=1.0):
         Msg_recv = bus.recv(wt)
         if Msg_recv is not None:
             return Msg_recv
-        else:
-            print('No answer from vmu')
+        # else:
+        #     print('No answer from vmu')
     except can.CanError:
         print(can.CanError)
     return False
@@ -359,8 +359,7 @@ def request_ttc_10(address: list[int]) -> list:
     ttc_data_list = list(FlowControlMsg.data)
     if ttc_data_list[:2] != RequestFrame:
         return 0
-    # return int_from_list(ttc_data_list[-4:])
-    return ttc_data_list[-4:]
+    return list(ttc_data_list[-4:])
 
 
 def request_ttc_1F(address: list[int]) -> int:
@@ -382,11 +381,9 @@ def request_ttc_04(address: list[int], number_of_bytes: int) -> (list[int]):
     frame_count = number_of_bytes // 6 + (1 if number_of_bytes % 6 else 0)
     for i in range(frame_count):
         Msg_recv = fun_can_rev_OneFrame(bus)
-        useful_data = Msg_recv.data[2:]
-        final_list.append(useful_data)
-        for bt in useful_data:
-            data_str += hex(bt)[2:].upper().zfill(2)
-    return final_list  # , data_str
+        useful_data = list(Msg_recv.data[2:])
+        final_list += useful_data
+    return final_list
 
 
 def check_some_info():
@@ -441,13 +438,15 @@ def ask_switch_number() -> (int, list[int]):
     return second_b, list(ecu_number_list)
 
 
-def check_CRC_Table_Checksum():
+def check_CRC_Table_Checksum(crc_Table_Checksum_list: list):
     command_18(CRC_int_Encrypted_list)  # check_sum_list = [0xA9, 0x31, 0xBA, 0x5D]
     # command_18(byte_list_from_int(CRC_int_Encrypted))  # check_sum_list = [0xA9, 0x31, 0xBA, 0x5D]
     command_0D(CRC_Table_Address_list)  # check_sum_list = [0x00, 0x0A, 0x00, 0x80]
     # command_0D(byte_list_from_int(CRC_Table_Address))  # check_sum_list = [0x00, 0x0A, 0x00, 0x80]
     table_checksum = request_CRC_Table_Checksum()
-    if table_checksum != CRC_Table_Checksum_list:  # 8B 16 73 6D     old CRC_Table_Checksum = FE D9 6C 12
+    print(f'give = {" ".join([hex(i) for i in crc_Table_Checksum_list])} ,'
+          f' get = {" ".join([hex(i) for i in table_checksum])}')
+    if table_checksum != crc_Table_Checksum_list:  # 8B 16 73 6D     old CRC_Table_Checksum = FE D9 6C 12
         print(f'CRC_Table_Checksum isn"t matched\n')
     check_some_info()
     return table_checksum
@@ -487,7 +486,8 @@ def info_and_CRC_after_boot():
         print(f'{unknown_CRC1=} is not {ttc_information[-4:]=}')
     #     на пустом кву не совпадает
     else:
-        check_CRC_Table_Checksum()
+        checksum = CRC_Table_Checksum_list or ttc_information[156:160]
+        check_CRC_Table_Checksum(checksum)
     ttc_information += request_ttc_04(lst3_for_0401, 0x80)
 
     command_18(lst2_for_1801)  # вообще непонятно откуда эта цифра  ok
@@ -512,7 +512,6 @@ if __name__ == '__main__':
     with open('data_for_first_boot_ttc.pickle', 'rb') as fp:
         first_data_list = pickle.load(fp)
     first_list = list_breaker(first_data_list)
-
     # file_name = filedialog.askopenfilename()
     # ih = IntelHex(file_name)
     # dt_list = list(ih.todict().values())
@@ -553,6 +552,10 @@ if __name__ == '__main__':
     lst1_for_19 = [0xB9, 0x20, 0x2E, 0xE7]  # [0xCB, 0x26, 0xFE, 0x10]
     lst2_for_1901 = [0xD3, 0xDE, 0xAE, 0x44]  # C6  08  B5  7E
     # switch_address = [0x40, 0xAF, 0x35, 0x9F]
+
+    CRC_int_Encrypted_list = [0xA9, 0x31, 0xBA, 0x5D]   # не факт
+    CRC_Table_Address_list = lst5_for_0401.copy()   # не факт
+    CRC_Table_Checksum_list = None
     # ======================= из файла connect_to_ttc ==================================
     switch_vmu_to_boot()  # ok
     second_byte, switch_address = ask_switch_number()  # ok
@@ -620,7 +623,7 @@ if __name__ == '__main__':
         print('Wrong answer from TTC at the end of hex')
     # --------------------------------------- end of boot hex -------------------
 
-    check_CRC_Table_Checksum()
+    check_CRC_Table_Checksum(CRC_Table_Checksum_list)
 
     # я хрен его знаю что это - хост задаёт какие-то адреса в кву
     sec0A = command_20([0x00, 0x0A, 0x00, 0x00, 0x00, 0x00])
@@ -633,13 +636,13 @@ if __name__ == '__main__':
     # ========================================================
     hello_and_switch_on(0.05)
     set_some_number_and_on()
-    check_CRC_Table_Checksum()
+    check_CRC_Table_Checksum(CRC_Table_Checksum_list)
     hello_and_switch_on()
     set_another_number_and_off()
     # ---------------------------------------
     hello_and_switch_on(0.07)
     set_some_number_and_on()
-    check_CRC_Table_Checksum()
+    check_CRC_Table_Checksum(CRC_Table_Checksum_list)
     hello_and_switch_on()
     set_another_number_and_off()
     # ==================================================================================
