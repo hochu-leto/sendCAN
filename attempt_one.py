@@ -362,15 +362,15 @@ def request_ttc_10(address: list[int]) -> list:
     return list(ttc_data_list[-4:])
 
 
-def request_ttc_1F(address: list[int]) -> int:
+def request_ttc_1F(address: list[int]) -> list:
     RequestFrame = [0x1F, second_byte]
     request_frame = RequestFrame + address
     fun_can_send_OneFrame(bus, CAN_ID_TX, request_frame)
     FlowControlMsg = fun_can_rev_OneFrame(bus)
     ttc_data_list = list(FlowControlMsg.data)
     if ttc_data_list[:2] != RequestFrame:
-        return 0
-    return int_from_list(ttc_data_list[-4:])
+        return []
+    return ttc_data_list[-4:]
 
 
 def request_ttc_04(address: list[int], number_of_bytes: int) -> (list[int]):
@@ -388,20 +388,22 @@ def request_ttc_04(address: list[int], number_of_bytes: int) -> (list[int]):
 
 def check_some_info():
     some_data_tts = request_ttc_04(lst5_for_0401, 0x10)
-    unknown_data1 = int_from_list(some_data_tts[8:12])  # D8 58 68 34
-    unknown_data2 = int_from_list(some_data_tts[12:16])  # 9D 45 1E E5
+    # unknown_data1 = int_from_list(some_data_tts[8:12])  # D8 58 68 34
+    print_hex_list(some_data_tts[12:16])  # 9D 45 1E E5
 
     req_unknown_data2 = request_ttc_1F([0x00, 0x00])
-    if req_unknown_data2 != unknown_data2:
-        print(f'unknown_data2 isn"t matched\n'
-              f' from hex {hex(unknown_data2)} != from ttc {hex(req_unknown_data2)}')
-        # quit()
-
+    # if req_unknown_data2 != unknown_data2:
+    #     print(f'unknown_data2 isn"t matched\n'
+    #           f' from hex {hex(unknown_data2)} != from ttc {hex(req_unknown_data2)}')
+    print('Data from 1F 00 = ', end='  ')
+    print_hex_list(req_unknown_data2)
     req_unknown_data1 = request_ttc_1F([0x00, 0x01])
-    if req_unknown_data1 != unknown_data1:
-        print(f'unknown_data1 isn"t matched\n'
-              f' from hex {hex(unknown_data1)} != from ttc {hex(req_unknown_data1)}')
-        # quit()
+    # if req_unknown_data1 != unknown_data1:
+    #     print(f'unknown_data1 isn"t matched\n'
+    #           f' from hex {hex(unknown_data1)} != from ttc {hex(req_unknown_data1)}')
+    print_hex_list(some_data_tts[8:12])
+    print('Data from 1F 01 = ', end='  ')
+    print_hex_list(req_unknown_data1)
 
 
 def hello_and_switch_on(tm: float = 0.001):
@@ -438,15 +440,18 @@ def ask_switch_number() -> (int, list[int]):
     return second_b, list(ecu_number_list)
 
 
-def check_CRC_Table_Checksum(crc_Table_Checksum_list: list):
+def req_checksum():
     command_18(CRC_int_Encrypted_list)  # check_sum_list = [0xA9, 0x31, 0xBA, 0x5D]
-    # command_18(byte_list_from_int(CRC_int_Encrypted))  # check_sum_list = [0xA9, 0x31, 0xBA, 0x5D]
     command_0D(CRC_Table_Address_list)  # check_sum_list = [0x00, 0x0A, 0x00, 0x80]
-    # command_0D(byte_list_from_int(CRC_Table_Address))  # check_sum_list = [0x00, 0x0A, 0x00, 0x80]
     table_checksum = request_CRC_Table_Checksum()
-    print(f'give = {" ".join([hex(i) for i in crc_Table_Checksum_list])} ,'
-          f' get = {" ".join([hex(i) for i in table_checksum])}')
-    if table_checksum != crc_Table_Checksum_list:  # 8B 16 73 6D     old CRC_Table_Checksum = FE D9 6C 12
+    print('CRC_Table_Checksum = ', end='  ')
+    print_hex_list(table_checksum)
+    return table_checksum
+
+
+def check_CRC_Table_Checksum(crc_Table_Checksum_list: list):
+    table_checksum = req_checksum()
+    if table_checksum != crc_Table_Checksum_list:
         print(f'CRC_Table_Checksum isn"t matched\n')
     check_some_info()
     return table_checksum
@@ -481,6 +486,7 @@ def info_and_CRC_after_boot():
     command_18(lst1_for_1801)  # вообще непонятно откуда эта цифра  ok
     command_0D(lst2_for_0D01)  # ????????????   ok
     unknown_CRC1 = request_ttc_10(lst1_for_1001)  # 48 5C 5B 0E     ok
+    print_hex_list(unknown_CRC1)
     # это последние 4 байта из ttc_information
     if unknown_CRC1 != ttc_information[-4:]:
         print(f'{unknown_CRC1=} is not {ttc_information[-4:]=}')
@@ -493,7 +499,7 @@ def info_and_CRC_after_boot():
     command_18(lst2_for_1801)  # вообще непонятно откуда эта цифра  ok
     command_0D(lst3_for_0D01)  # ????????????   ok
     unknown_CRC2 = request_ttc_10(lst2_for_1001)  # ok 74 01 FB 28
-
+    print_hex_list(unknown_CRC2)
     ttc_information += request_ttc_04(lst4_for_0401, 0x80)
     hello_and_switch_on()
     set_another_number_and_off()  # other number
@@ -505,6 +511,12 @@ def say_good_buy():
     good_buy_frame = [0x11, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x01]
     fun_can_send_OneFrame(bus, CAN_ID_TX, good_buy_frame)
     fun_can_send_OneFrame(bus, CAN_ID_TX, [0x03, 0xFF])
+
+
+def print_hex_list(msg: list):
+    for i in msg:
+        print(hex(i).upper()[:2], end=' ')
+    print()
 
 
 if __name__ == '__main__':
@@ -533,7 +545,7 @@ if __name__ == '__main__':
     lst2_for_0401 = [0x00, 0x0A, 0x00, 0x00]
     lst3_for_0401 = [0x00, 0x09, 0xFF, 0x80]
     lst4_for_0401 = [0x00, 0x01, 0x80, 0x00]
-    lst5_for_0401 = [0x00, 0x0A, 0x00, 0x80]
+    lst5_for_0401 = [0x00, 0x0A, 0x00, 0x80]    # also for 0D
 
     lst1_for_0E01 = [0x08, 0x00, 0xCA, 0x00]
 
@@ -543,6 +555,7 @@ if __name__ == '__main__':
 
     lst1_for_1001 = [0x00, 0x00, 0x00, 0x7C]
     lst2_for_1001 = [0x00, 0x07, 0xFF, 0x80]
+    lst3_for_1001 = [0x00, 0x00, 0xFF, 0x80]
 
     lst2_for_1701 = [0x5B, 0x5E, 0x46, 0x81]  # lst2_for_1700 = [0xC6, 0xF3, 0xF4, 0x1E, 0x01] C6  F3  F4  1E  01
 
@@ -579,33 +592,42 @@ if __name__ == '__main__':
     another_list = command_17(lst2_for_1701 + [0x01])  # other
     if not some_list or not another_list:
         print(f'wrong answer from vmu for 17 01 request')
-        # quit()
 
+    time.sleep(0.05)
+    fun_can_send_OneFrame(bus, CAN_ID_TX, hello_frame)
     hello_and_switch_on()  # ok
     set_some_number_and_on()  # ok
     info_before, some_CRC = info_and_CRC_after_boot()  # ng 19 list
 
     # ==================================== select file ======================================
+    hello_and_switch_on()
+    set_some_number_and_on()
+    print_hex_list(req_checksum())
+    hello_and_switch_on()
+    set_another_number_and_off()
+
     file_name = filedialog.askopenfilename()
     # file_name = 'C:\\Users\\timofey.inozemtsev\\PycharmProjects\\sendCAN\\my_boot_580\\full_boot_1.5.0\\vmu_n1_580_1_5_0.hex'
     ih = IntelHex(file_name)
     dt_list = list(ih.todict().values())
     print(f'{len(dt_list)=}')
+
     Node_Type_list = dt_list[12:16]
     CRC_Table_Address_list = dt_list[16:20]
     CRC_Table_Checksum_list = dt_list[28:32]
     CRC_int_Encrypted_list = dt_list[36:40]
     chunk_list = new_list_breaker(dt_list)
 
-    hello_and_switch_on()
-    set_some_number_and_on()
+    hello_and_switch_on()  # ok
+    set_some_number_and_on()  # ng 19 list
+    print_hex_list(req_checksum())
     hello_and_switch_on()
     set_another_number_and_off()
 
     # =================================== всё, что в файле boot_hex.asc=======================
     hello_and_switch_on()  # ok
     set_some_number_and_on()  # ng 19 list
-    # я хрен его знаю что это - хост задаёт какие-то адреса в кву  ok
+    # я хрен его знаю что это - хост задаёт какие-то адреса в кву ok
     sec0A = command_0C([0x00, 0x0A, 0x00, 0x00, 0xFF, 0xFF])
     sec0C = command_0C([0x00, 0x0C, 0x00, 0x00, 0xFF, 0xFF])
     sec0E = command_0C([0x00, 0x0E, 0x00, 0x00, 0xFF, 0xFF])
