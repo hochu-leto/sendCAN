@@ -1,0 +1,13 @@
+1: [0,004s]: [Info] Started application on 20.04.2023 17:48:05
+2: [14,712s]: [Error] [Protocol] The user cancelled the action
+3: [14,714s]: [Error] Connection Procedure failed: [Protocol] The user cancelled the action
+4: [169,497s]: [Note] Found a node (Nr. 0)!
+5: [169,855s]: [Info] Connected to targets
+6: [174,817s]: [Note] Found a node (Nr. 0)!
+7: [175,066s]: [Info] Successfully downloaded application (73,2kb) with 14,1kb/s
+8: [243,383s]: [Warning] The selected application might not match the target's hardware type: file=0x600807, target=0x402007
+9: [249,714s]: [Warning] The selected application might not match the target's hardware type: file=0x600807, target=0x402007
+10: [339,637s]: [Info] Successfully downloaded application (491,8kb) with 15,3kb/s
+11: [340,757s]: [Warning] The selected application might not match the target's hardware type: file=0x600807, target=0x402007
+12: [340,817s]: [Warning] The selected application might not match the target's hardware type: file=0x600807, target=0x402007
+13: [420,450s]: [Info] Successfully disconnected...
